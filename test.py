@@ -1,89 +1,66 @@
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
-import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# 1. 페이지 기본 설정
-st.set_page_config(page_title="주식 차트 마스터", layout="wide")
+# 1. 페이지 설정
+st.set_page_config(page_title="Plotly 주식 마스터", layout="wide")
 
-# 2. 헤더 및 설명
-st.title("📈 실시간 주식 분석 대시보드")
-st.info("💡 **팁**: 삼성전자는 `005930`, 애플은 `AAPL`, 테슬라는 `TSLA`를 입력하세요.")
+st.title("📈 Plotly 프로페셔널 주식 차트")
 
-# 3. 사이드바 - 사용자 입력
+# 2. 사이드바 설정
 st.sidebar.header("조회 설정")
-user_input = st.sidebar.text_input("종목 코드 또는 티커 입력", value="005930").strip()
-period = st.sidebar.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3)
+ticker = st.sidebar.text_input("종목 코드 (예: TSLA, AAPL, 005930.KS)", value="TSLA")
+period = st.sidebar.selectbox("기간 선택", ["1mo", "3mo", "6mo", "1y", "5y", "max"])
+interval = st.sidebar.selectbox("간격 선택", ["1d", "1wk", "1mo"])
 
-# 4. [핵심] 종목 코드 판별 로직 (오류 방지)
-if user_input.isdigit():
-    if len(user_input) == 6:
-        # 한국 주식 (숫자 6자리) -> .KS(코스피) 시도 후 데이터 없으면 .KQ(코스닥)
-        ticker = f"{user_input}.KS"
-    else:
-        st.error("❗ 한국 종목 코드는 6자리 숫자여야 합니다.")
-        st.stop()
-else:
-    # 미국 주식 또는 기타 (영문자)
-    ticker = user_input.upper()
+# 3. 데이터 가져오기
+@st.cache_data
+def load_data(symbol, p, i):
+    df = yf.download(symbol, period=p, interval=i)
+    return df
 
-# 5. 데이터 불러오기
-@st.cache_data(ttl=600) # 10분간 캐시 보관
-def get_data(symbol, p):
-    try:
-        # 1차 시도 (입력된 티커로 가져오기)
-        df = yf.download(symbol, period=p, interval="1d")
-        
-        # 만약 코스피(.KS)로 안 나오면 코스닥(.KQ)으로 한 번 더 시도
-        if df.empty and symbol.endswith(".KS"):
-            symbol_kq = symbol.replace(".KS", ".KQ")
-            df = yf.download(symbol_kq, period=p, interval="1d")
-            return df, symbol_kq
-            
-        return df, symbol
-    except:
-        return None, symbol
-
-data, final_ticker = get_data(ticker, period)
-
-# 6. 차트 및 정보 출력
-if data is not None and not data.empty:
-    # 상단 지표 (Metric)
-    current_price = data['Close'].iloc[-1]
-    prev_close = data['Close'].iloc[-2]
-    change = current_price - prev_close
-    percent = (change / prev_close) * 100
+try:
+    data = load_data(ticker, period, interval)
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("최종 종목 코드", final_ticker)
-    col2.metric("현재가", f"{current_price:,.2f}", f"{change:,.2f} ({percent:.2f}%)")
-    col3.metric("거래량", f"{data['Volume'].iloc[-1]:,}")
+    if not data.empty:
+        # 4. Plotly 캔들스틱 차트 생성
+        fig = go.Figure()
 
-    # Plotly 캔들스틱 차트 (봉차트)
-    fig = go.Figure(data=[go.Candlestick(
-        x=data.index,
-        open=data['Open'],
-        high=data['High'],
-        low=data['Low'],
-        close=data['Close'],
-        name='주가'
-    )])
+        # 캔들스틱 추가 (시가, 고가, 저가, 종가)
+        fig.add_trace(go.Candlestick(
+            x=data.index,
+            open=data['Open'],
+            high=data['High'],
+            low=data['Low'],
+            close=data['Close'],
+            name='주가'
+        ))
 
-    fig.update_layout(
-        title=f"{final_ticker} 주가 흐름 (기간: {period})",
-        template="plotly_dark",
-        xaxis_rangeslider_visible=True,
-        height=600,
-        margin=dict(l=10, r=10, t=50, b=10)
-    )
+        # 이동평균선(MA20) 추가 (선택 사항)
+        data['MA20'] = data['Close'].rolling(window=20).mean()
+        fig.add_trace(go.Scatter(x=data.index, y=data['MA20'], name='20일 이동평균선', line=dict(color='orange', width=1)))
 
-    # 차트 출력 (2026년 규격: width='stretch')
-    st.plotly_chart(fig, width='stretch')
+        # 5. 차트 디자인 설정
+        fig.update_layout(
+            title=f"{ticker} 주가 분석 차트",
+            yaxis_title="가격 (USD/KRW)",
+            xaxis_rangeslider_visible=True, # 하단 범위 조절 바
+            template="plotly_dark",         # 다크 모드 적용
+            height=600
+        )
 
-    # 데이터 테이블
-    with st.expander("최근 시세 데이터 보기"):
-        st.dataframe(data.tail(10).sort_index(ascending=False), use_container_width=True)
+        # 6. Streamlit 화면에 표시
+        st.plotly_chart(fig, use_container_width=True)
 
-else:
-    st.error(f"❌ '{ticker}' 데이터를 찾을 수 없습니다. 코스피/코스닥 번호나 미국 티커를 확인하세요.")
+        # 7. 보조 정보 출력
+        col1, col2, col3 = st.columns(3)
+        col1.metric("최고가", f"{data['High'].max():.2f}")
+        col2.metric("최저가", f"{data['Low'].min():.2f}")
+        col3.metric("거래량", f"{data['Volume'].iloc[-1]:,}")
+
+    else:
+        st.error("데이터를 불러올 수 없습니다. 종목 코드를 다시 확인하세요.")
+
+except Exception as e:
+    st.error(f"오류가 발생했습니다: {e}")
