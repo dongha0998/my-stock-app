@@ -1,46 +1,32 @@
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
-import FinanceDataReader as fdr # 종목 검색용
 import pandas as pd
 
+# 페이지 설정
 st.set_page_config(page_title="주식 검색 마스터", layout="wide")
-
-# 1. 한국 주식 종목 리스트 불러오기 (캐싱 처리로 속도 업)
-@st.cache_data
-def get_stock_list():
-    # 한국 거래소 종목 리스트
-    krx = fdr.StockListing('KRX')
-    return krx[['Symbol', 'Name']]
-
-stock_df = get_stock_list()
 
 st.title("🔍 스마트 주식 검색 & 차트")
 
-# 2. 사이드바 검색 기능
+# 에러가 났던 get_stock_list 대신, 직접 입력 방식으로 변경
 st.sidebar.header("종목 검색")
-search_name = st.sidebar.text_input("회사 이름을 입력하세요 (예: 삼성전자, 테슬라)", value="삼성전자")
+search_input = st.sidebar.text_input("종목 코드 또는 이름을 입력하세요", value="AAPL")
 
-# 이름으로 코드 찾기 로직
-# 한국 주식 우선 검색
-match = stock_df[stock_df['Name'].str.contains(search_name, na=False)]
-
-if not match.empty:
-    # 한국 주식일 경우 (코스피는 .KS, 코스닥은 .KQ 추가 필요)
-    raw_code = match.iloc['Symbol']
-    # 보통 6자리 숫자인 경우 한국 주식
-    ticker_code = f"{raw_code}.KS" if len(raw_code) == 6 else raw_code
-    st.sidebar.success(f"찾은 종목: {match.iloc['Name']} ({ticker_code})")
+# 한국 주식인지 확인하는 간단한 로직 (숫자 6자리면 .KS 붙이기)
+if search_input.isdigit() and len(search_input) == 6:
+    ticker_code = f"{search_input}.KS"
+    display_name = f"한국 종목 ({search_input})"
 else:
-    # 한국 주식에 없으면 미국 주식 코드로 직접 사용 (예: TSLA, AAPL)
-    ticker_code = search_name.upper()
-    st.sidebar.info(f"국내 종목에 없어 입력값 '{ticker_code}'를 직접 사용합니다.")
+    ticker_code = search_input.upper()
+    display_name = ticker_code
 
-# 3. 데이터 로드 및 차트 출력 (Plotly)
+# 데이터 로드 및 차트 출력
 try:
+    # 데이터 가져오기 (기간 1년)
     data = yf.download(ticker_code, period="1y", interval="1d")
     
     if not data.empty:
+        # Plotly 캔들스틱 차트
         fig = go.Figure(data=[go.Candlestick(
             x=data.index,
             open=data['Open'],
@@ -51,20 +37,21 @@ try:
         )])
         
         fig.update_layout(
-            title=f"{search_name} ({ticker_code}) 1년 주가 추이",
+            title=f"{display_name} 주가 추이",
             template="plotly_dark",
-            xaxis_rangeslider_visible=True,
-            width=1000 # 최신 경고 대응: stretch 대신 고정 혹은 width 조절
+            xaxis_rangeslider_visible=True
         )
         
-        st.plotly_chart(fig, width='stretch') # 2026년형 옵션 적용
+        st.plotly_chart(fig, width='stretch')
         
-        # 간단 지표
+        # 지표 출력
         col1, col2 = st.columns(2)
-        col1.metric("현재가", f"{data['Close'].iloc[-1]:.2f}")
-        col2.metric("전일대비", f"{data['Close'].iloc[-1] - data['Close'].iloc[-2]:.2f}")
+        current_price = data['Close'].iloc[-1]
+        prev_price = data['Close'].iloc[-2]
+        col1.metric("현재가", f"{current_price:.2f}")
+        col2.metric("전일대비", f"{current_price - prev_price:.2f}")
     else:
-        st.warning("데이터를 가져올 수 없습니다. 정확한 이름을 입력해 주세요.")
+        st.warning(f"'{ticker_code}'에 대한 데이터를 찾을 수 없습니다. (예: 삼성전자는 005930, 애플은 AAPL)")
 
 except Exception as e:
     st.error(f"오류가 발생했습니다: {e}")
